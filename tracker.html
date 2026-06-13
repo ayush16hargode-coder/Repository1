@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Playlist Progress Tracker Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        
+        .glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen font-sans antialiased">
+    <div id="app" class="max-w-6xl mx-auto p-4 md:p-8">
+        
+        <header class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+            <h1 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400 cursor-pointer" @click="activePlaylistId = null">
+                <i class="fa-solid fa-layer-group mr-2 text-blue-400"></i> Playlist Tracker
+            </h1>
+            
+            <div class="flex items-center gap-2 w-full md:w-auto">
+                <input 
+                    v-model="apiKey" 
+                    type="password" 
+                    placeholder="Enter YouTube API Key..." 
+                    class="bg-gray-800 border border-gray-700 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full md:w-64 p-2.5 outline-none transition-all"
+                >
+            </div>
+        </header>
+
+        <div class="glass rounded-2xl p-6 mb-8 shadow-xl">
+            <form @submit.prevent="fetchPlaylist" class="flex flex-col md:flex-row gap-4">
+                <div class="flex-grow">
+                    <input 
+                        v-model="inputUrl" 
+                        type="text" 
+                        placeholder="Paste a YouTube Playlist URL to add to your library..." 
+                        class="bg-gray-800 border border-gray-700 text-white text-sm rounded-lg focus:ring-emerald-500 focus:border-emerald-500 block w-full p-3 outline-none"
+                        required
+                    >
+                </div>
+                <div class="flex items-end">
+                    <button type="submit" :disabled="isLoading || !apiKey" class="w-full md:w-auto bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 disabled:opacity-50 text-white font-medium rounded-lg text-sm px-8 py-3 transition-all flex items-center justify-center gap-2">
+                        <i v-if="isLoading" class="fa-solid fa-spinner fa-spin"></i>
+                        <i v-else class="fa-solid fa-plus"></i>
+                        {{ isLoading ? 'Importing...' : 'Add Playlist' }}
+                    </button>
+                </div>
+            </form>
+            <p v-if="error" class="mt-3 text-red-400 text-sm"><i class="fa-solid fa-circle-exclamation mr-1"></i> {{ error }}</p>
+        </div>
+
+        <div v-if="!activePlaylistId" class="fade-in">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-semibold">Your Library ({{ playlists.length }})</h2>
+            </div>
+
+            <div v-if="playlists.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div 
+                    v-for="pl in playlists" 
+                    :key="pl.id"
+                    @click="activePlaylistId = pl.id"
+                    class="glass rounded-xl overflow-hidden cursor-pointer hover:border-emerald-500/50 hover:-translate-y-1 transition-all group flex flex-col h-full"
+                >
+                    <div class="relative h-40 overflow-hidden bg-gray-800">
+                        <img :src="pl.thumbnail" class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity">
+                        <div class="absolute bottom-0 left-0 w-full h-1 bg-gray-700">
+                            <div class="h-full bg-emerald-500" :style="{ width: calculateProgress(pl) + '%' }"></div>
+                        </div>
+                    </div>
+                    <div class="p-4 flex flex-col flex-grow">
+                        <h3 class="font-bold text-lg mb-1 line-clamp-2">{{ pl.title }}</h3>
+                        <p class="text-sm text-gray-400 mb-3">{{ pl.channelTitle }}</p>
+                        
+                        <div class="mt-auto flex justify-between items-end">
+                            <div class="text-sm">
+                                <span class="text-emerald-400 font-bold">{{ calculateProgress(pl) }}%</span> 
+                                <span class="text-gray-500 ml-1">Complete</span>
+                            </div>
+                            <button @click.stop="removePlaylist(pl.id)" class="text-gray-500 hover:text-red-400 transition-colors" title="Delete Playlist">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-else class="text-center py-20 text-gray-500 border-2 border-dashed border-gray-700 rounded-2xl">
+                <i class="fa-solid fa-folder-open text-5xl mb-4 text-gray-600"></i>
+                <h3 class="text-xl font-medium text-gray-400">Your library is empty</h3>
+                <p class="mt-2 text-sm">Add your first playlist using the bar above.</p>
+            </div>
+        </div>
+
+        <div v-else-if="activePlaylist" class="fade-in">
+            
+            <button @click="activePlaylistId = null" class="mb-6 text-gray-400 hover:text-white transition-colors flex items-center gap-2">
+                <i class="fa-solid fa-arrow-left"></i> Back to Library
+            </button>
+
+            <div class="glass rounded-2xl p-6 md:p-8 mb-8 flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
+                <div class="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl -z-10 translate-x-1/2 -translate-y-1/2"></div>
+                
+                <div class="flex items-center gap-6 z-10 w-full md:w-auto">
+                    <img :src="activePlaylist.thumbnail" class="w-32 h-auto rounded-lg shadow-lg object-cover hidden md:block" alt="Thumbnail">
+                    <div>
+                        <h2 class="text-2xl font-bold text-white mb-1">{{ activePlaylist.title }}</h2>
+                        <p class="text-gray-400 mb-4">{{ activePlaylist.channelTitle }} • {{ activePlaylist.videos.length }} Videos</p>
+                        
+                        <div class="flex gap-3">
+                            <button @click="markAll(true)" class="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 px-3 py-1.5 rounded-md transition-colors"><i class="fa-solid fa-check-double mr-1"></i> Mark All Complete</button>
+                            <button @click="markAll(false)" class="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 px-3 py-1.5 rounded-md transition-colors"><i class="fa-solid fa-rotate-left mr-1"></i> Reset Progress</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="text-center md:text-right z-10 bg-gray-900/50 p-4 rounded-xl border border-gray-700 w-full md:w-48">
+                    <div class="text-4xl font-black text-emerald-400 mb-1">{{ calculateProgress(activePlaylist) }}%</div>
+                    <div class="text-sm text-gray-400 font-medium mb-3">Completed</div>
+                    
+                    <div class="w-full bg-gray-700 rounded-full h-2.5">
+                        <div class="bg-gradient-to-r from-blue-500 to-emerald-500 h-2.5 rounded-full transition-all duration-500" :style="{ width: calculateProgress(activePlaylist) + '%' }"></div>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-500">{{ getCompletedCount(activePlaylist) }} of {{ activePlaylist.videos.length }} videos</div>
+                </div>
+            </div>
+
+            <div class="space-y-3">
+                <div 
+                    v-for="(video, index) in activePlaylist.videos" 
+                    :key="video.id"
+                    @click="video.completed = !video.completed"
+                    class="glass rounded-xl p-4 flex flex-col md:flex-row items-start md:items-center gap-4 cursor-pointer hover:bg-white/10 transition-colors border-l-4"
+                    :class="video.completed ? 'border-l-emerald-500 opacity-75' : 'border-l-transparent'"
+                >
+                    <div class="flex-shrink-0 pt-1 md:pt-0">
+                        <div class="w-6 h-6 rounded border-2 flex items-center justify-center transition-colors"
+                             :class="video.completed ? 'bg-emerald-500 border-emerald-500' : 'border-gray-500'">
+                            <i v-if="video.completed" class="fa-solid fa-check text-white text-sm"></i>
+                        </div>
+                    </div>
+
+                    <div class="flex-shrink-0 hidden sm:block relative">
+                        <img :src="video.thumbnail" class="w-24 h-14 object-cover rounded-md bg-gray-800" loading="lazy">
+                        <div class="absolute bottom-1 right-1 bg-black/80 text-white text-[10px] px-1 rounded">{{ index + 1 }}</div>
+                    </div>
+
+                    <div class="flex-grow pr-4">
+                        <h3 class="text-sm md:text-base font-medium line-clamp-2" :class="video.completed ? 'text-gray-400 line-through' : 'text-gray-100'">
+                            {{ video.title }}
+                        </h3>
+                    </div>
+
+                    <div class="flex-shrink-0">
+                        <a :href="`https://youtube.com/watch?v=${video.id}`" target="_blank" @click.stop class="text-gray-400 hover:text-blue-400 p-2 transition-colors" title="Watch on YouTube">
+                            <i class="fa-brands fa-youtube text-xl"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, watch } = Vue;
+
+        createApp({
+            setup() {
+                const apiKey = ref(localStorage.getItem('yt_api_key') || '');
+                const inputUrl = ref('');
+                
+                // NEW: Array to hold multiple playlists
+                const playlists = ref(JSON.parse(localStorage.getItem('saved_playlists')) || []);
+                // NEW: Tracks which playlist is currently open
+                const activePlaylistId = ref(localStorage.getItem('active_playlist_id') || null);
+                
+                const isLoading = ref(false);
+                const error = ref('');
+
+                // Computed: Get the actual playlist object that is currently active
+                const activePlaylist = computed(() => {
+                    return playlists.value.find(p => p.id === activePlaylistId.value);
+                });
+
+                // Watchers: Save everything automatically
+                watch(playlists, (newVal) => localStorage.setItem('saved_playlists', JSON.stringify(newVal)), { deep: true });
+                watch(activePlaylistId, (newVal) => localStorage.setItem('active_playlist_id', newVal || ''));
+                watch(apiKey, (newVal) => localStorage.setItem('yt_api_key', newVal));
+
+                // Logic Math Helpers
+                const getCompletedCount = (pl) => pl.videos.filter(v => v.completed).length;
+                const calculateProgress = (pl) => {
+                    if (!pl || pl.videos.length === 0) return 0;
+                    return Math.round((getCompletedCount(pl) / pl.videos.length) * 100);
+                };
+
+                const extractPlaylistId = (url) => {
+                    if (url.includes('list=')) {
+                        return new URLSearchParams(new URL(url).search).get('list');
+                    }
+                    return url; 
+                };
+
+                const fetchPlaylist = async () => {
+                    error.value = '';
+                    if (!apiKey.value) {
+                        error.value = 'Please enter your YouTube API Key in the top right.';
+                        return;
+                    }
+
+                    const playlistId = extractPlaylistId(inputUrl.value);
+                    if (!playlistId) {
+                        error.value = 'Invalid playlist URL or ID.';
+                        return;
+                    }
+
+                    isLoading.value = true;
+                    try {
+                        const pRes = await fetch(`https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${playlistId}&key=${apiKey.value}`);
+                        const pData = await pRes.json();
+                        
+                        if (pData.error) throw new Error(pData.error.message);
+                        if (!pData.items || pData.items.length === 0) throw new Error('Playlist not found or is private.');
+
+                        const pSnippet = pData.items[0].snippet;
+                        
+                        let allVideos = [];
+                        let pageToken = '';
+                        
+                        do {
+                            const vRes = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=50&playlistId=${playlistId}&key=${apiKey.value}&pageToken=${pageToken}`);
+                            const vData = await vRes.json();
+                            if (vData.error) throw new Error(vData.error.message);
+
+                            const formattedVideos = vData.items
+                                .filter(item => item.snippet.title !== 'Private video' && item.snippet.title !== 'Deleted video')
+                                .map(item => ({
+                                    id: item.snippet.resourceId.videoId,
+                                    title: item.snippet.title,
+                                    thumbnail: item.snippet.thumbnails?.default?.url || '',
+                                    completed: false 
+                                }));
+                            
+                            allVideos = allVideos.concat(formattedVideos);
+                            pageToken = vData.nextPageToken || '';
+                        } while (pageToken);
+
+                        // Structure the new playlist
+                        const newPlaylist = {
+                            id: playlistId,
+                            title: pSnippet.title,
+                            channelTitle: pSnippet.channelTitle,
+                            thumbnail: pSnippet.thumbnails?.high?.url || pSnippet.thumbnails?.default?.url,
+                            videos: allVideos,
+                            dateAdded: new Date().toISOString()
+                        };
+
+                        // Check if it already exists to update it without losing progress
+                        const existingIndex = playlists.value.findIndex(p => p.id === playlistId);
+                        if (existingIndex >= 0) {
+                            const oldVideos = playlists.value[existingIndex].videos;
+                            newPlaylist.videos.forEach(newVid => {
+                                const oldVid = oldVideos.find(v => v.id === newVid.id);
+                                if (oldVid) newVid.completed = oldVid.completed;
+                            });
+                            playlists.value[existingIndex] = newPlaylist;
+                        } else {
+                            // Add new to library
+                            playlists.value.unshift(newPlaylist); 
+                        }
+
+                        // Open the newly imported playlist immediately
+                        activePlaylistId.value = playlistId;
+                        inputUrl.value = ''; 
+
+                    } catch (err) {
+                        error.value = err.message || 'Failed to fetch playlist data.';
+                    } finally {
+                        isLoading.value = false;
+                    }
+                };
+
+                const markAll = (status) => {
+                    if (activePlaylist.value) {
+                        activePlaylist.value.videos.forEach(v => v.completed = status);
+                    }
+                };
+
+                const removePlaylist = (id) => {
+                    if (confirm('Are you sure you want to delete this playlist from your library? Progress will be lost.')) {
+                        playlists.value = playlists.value.filter(p => p.id !== id);
+                        if (activePlaylistId.value === id) {
+                            activePlaylistId.value = null; // Go back to library if deleting the open one
+                        }
+                    }
+                };
+
+                return {
+                    apiKey, inputUrl, playlists, activePlaylistId, activePlaylist, 
+                    isLoading, error, fetchPlaylist, markAll, removePlaylist, 
+                    calculateProgress, getCompletedCount
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
